@@ -184,6 +184,21 @@ def test_no_node_id_collision_same_filename_different_dirs(tmp_path):
     assert len(set(model_ids)) == 2, f"ID collision: both nodes have same ID {model_ids}"
 
 
+def test_source_file_paths_are_relative(tmp_path):
+    """source_file fields must be project-relative, not absolute (#555)."""
+    src = tmp_path / "src" / "auth.py"
+    src.parent.mkdir()
+    src.write_text("class Auth:\n    pass\n")
+    result = extract([src])
+    abs_prefix = str(tmp_path)
+    for n in result["nodes"]:
+        sf = n.get("source_file", "")
+        assert not sf.startswith(abs_prefix), f"Absolute source_file in node: {sf}"
+    for e in result["edges"]:
+        sf = e.get("source_file", "")
+        assert sf == "" or not sf.startswith(abs_prefix), f"Absolute source_file in edge: {sf}"
+
+
 # ── GDScript regression tests (#535) ─────────────────────────────────────────
 
 def test_extract_gdscript_finds_functions():

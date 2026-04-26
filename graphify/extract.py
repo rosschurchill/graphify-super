@@ -3397,6 +3397,22 @@ def extract(paths: list[Path], cache_root: Path | None = None) -> dict:
             if e.get("target") in id_remap:
                 e["target"] = id_remap[e["target"]]
 
+    # Relativize source_file paths so graph.json is portable across machines (#555)
+    for n in all_nodes:
+        sf = n.get("source_file")
+        if sf:
+            try:
+                n["source_file"] = str(Path(sf).relative_to(root))
+            except ValueError:
+                pass
+    for e in all_edges:
+        sf = e.get("source_file")
+        if sf:
+            try:
+                e["source_file"] = str(Path(sf).relative_to(root))
+            except ValueError:
+                pass
+
     # Add cross-file class-level edges (Python only - uses Python parser internally)
     py_paths = [p for p in paths if p.suffix == ".py"]
     if py_paths:
