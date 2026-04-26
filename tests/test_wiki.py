@@ -125,6 +125,15 @@ def test_article_navigation_footer(tmp_path):
     assert "[[index]]" in article
 
 
+def test_to_wiki_clears_stale_articles(tmp_path):
+    """Orphan .md files from a previous run must be deleted before regeneration."""
+    stale = tmp_path / "OldArticle.md"
+    stale.write_text("stale content")
+    G = _make_graph()
+    to_wiki(G, COMMUNITIES, tmp_path, community_labels=LABELS)
+    assert not stale.exists()
+
+
 def test_community_article_truncation_notice(tmp_path):
     """Communities with more than 25 nodes show a truncation notice."""
     G = nx.Graph()

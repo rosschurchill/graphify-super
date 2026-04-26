@@ -184,6 +184,8 @@ def to_wiki(
     """
     out = Path(output_dir)
     out.mkdir(parents=True, exist_ok=True)
+    for _stale in out.glob("*.md"):
+        _stale.unlink()
 
     labels = community_labels or {cid: f"Community {cid}" for cid in communities}
     cohesion = cohesion or {}
