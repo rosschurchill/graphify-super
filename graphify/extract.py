@@ -1543,6 +1543,71 @@ def extract_dart(path: Path) -> dict:
     return {"nodes": nodes, "edges": edges}
 
 
+# ── GDScript extractor ───────────────────────────────────────────────────────
+
+def extract_gdscript(path: Path) -> dict:
+    """Extract class_name, func declarations, extends, and preload imports from a .gd file."""
+    try:
+        src = path.read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return {"error": f"cannot read {path}"}
+
+    file_nid = _make_id(str(path))
+    nodes = [{"id": file_nid, "label": path.name, "file_type": "code",
+              "source_file": str(path), "source_location": None}]
+    edges = []
+    defined: set[str] = set()
+
+    # class_name declaration (GDScript named class)
+    for m in re.finditer(r"^class_name\s+(\w+)", src, re.MULTILINE):
+        nid = _make_id(str(path), m.group(1))
+        if nid not in defined:
+            nodes.append({"id": nid, "label": m.group(1), "file_type": "code",
+                          "source_file": str(path), "source_location": None})
+            edges.append({"source": file_nid, "target": nid, "relation": "defines",
+                          "confidence": "EXTRACTED", "confidence_score": 1.0,
+                          "source_file": str(path), "source_location": None, "weight": 1.0})
+            defined.add(nid)
+
+    # extends BaseClass
+    for m in re.finditer(r"^extends\s+(\w+)", src, re.MULTILINE):
+        base = m.group(1)
+        tgt_nid = _make_id(base)
+        if tgt_nid not in defined:
+            nodes.append({"id": tgt_nid, "label": base, "file_type": "code",
+                          "source_file": str(path), "source_location": None})
+            defined.add(tgt_nid)
+        edges.append({"source": file_nid, "target": tgt_nid, "relation": "inherits",
+                      "confidence": "EXTRACTED", "confidence_score": 1.0,
+                      "source_file": str(path), "source_location": None, "weight": 1.0})
+
+    # func declarations (top-level and indented)
+    for m in re.finditer(r"^\s*func\s+(\w+)\s*\(", src, re.MULTILINE):
+        name = m.group(1)
+        nid = _make_id(str(path), name)
+        if nid not in defined:
+            nodes.append({"id": nid, "label": name, "file_type": "code",
+                          "source_file": str(path), "source_location": None})
+            edges.append({"source": file_nid, "target": nid, "relation": "defines",
+                          "confidence": "EXTRACTED", "confidence_score": 1.0,
+                          "source_file": str(path), "source_location": None, "weight": 1.0})
+            defined.add(nid)
+
+    # preload("res://...") and load("res://...") imports
+    for m in re.finditer(r"""(?:preload|load)\s*\(\s*['"]([^'"]+)['"]\s*\)""", src):
+        resource = m.group(1)
+        tgt_nid = _make_id(resource)
+        if tgt_nid not in defined:
+            nodes.append({"id": tgt_nid, "label": resource, "file_type": "code",
+                          "source_file": str(path), "source_location": None})
+            defined.add(tgt_nid)
+        edges.append({"source": file_nid, "target": tgt_nid, "relation": "imports",
+                      "confidence": "EXTRACTED", "confidence_score": 1.0,
+                      "source_file": str(path), "source_location": None, "weight": 1.0})
+
+    return {"nodes": nodes, "edges": edges}
+
+
 def extract_verilog(path: Path) -> dict:
     """Extract modules, functions, tasks, package imports, and instantiations from .v/.sv files."""
     try:
@@ -3267,6 +3332,7 @@ def extract(paths: list[Path], cache_root: Path | None = None) -> dict:
         ".vue": extract_js,
         ".svelte": extract_js,
         ".dart": extract_dart,
+        ".gd": extract_gdscript,
         ".v": extract_verilog,
         ".sv": extract_verilog,
     }
@@ -3389,7 +3455,7 @@ def collect_files(target: Path, *, follow_symlinks: bool = False, root: Path | N
         ".java", ".c", ".h", ".cpp", ".cc", ".cxx", ".hpp",
         ".rb", ".cs", ".kt", ".kts", ".scala", ".php", ".swift",
         ".lua", ".toc", ".zig", ".ps1",
-        ".m", ".mm",
+        ".m", ".mm", ".gd",
     }
     from graphify.detect import _load_graphifyignore, _is_ignored
     ignore_root = root if root is not None else target

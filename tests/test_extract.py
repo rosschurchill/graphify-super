@@ -1,5 +1,5 @@
 from pathlib import Path
-from graphify.extract import extract_python, extract, collect_files, _make_id
+from graphify.extract import extract_python, extract, collect_files, _make_id, extract_gdscript
 
 FIXTURES = Path(__file__).parent / "fixtures"
 
@@ -62,7 +62,7 @@ def test_collect_files_from_dir():
                  ".java", ".c", ".cpp", ".cc", ".cxx", ".rb",
                  ".cs", ".kt", ".kts", ".scala", ".php", ".h", ".hpp",
                  ".swift", ".lua", ".toc", ".zig", ".ps1", ".ex", ".exs",
-                 ".m", ".mm"}
+                 ".m", ".mm", ".gd"}
     assert all(f.suffix in supported for f in files)
     assert len(files) > 0
 
@@ -168,3 +168,43 @@ def test_calls_deduplication():
     result = extract_python(FIXTURES / "sample_calls.py")
     call_pairs = [(e["source"], e["target"]) for e in result["edges"] if e["relation"] == "calls"]
     assert len(call_pairs) == len(set(call_pairs)), "Duplicate calls edges found"
+
+
+# ── GDScript regression tests (#535) ─────────────────────────────────────────
+
+def test_extract_gdscript_finds_functions():
+    """extract_gdscript must extract func declarations from a .gd file."""
+    result = extract_gdscript(FIXTURES / "sample.gd")
+    labels = {n["label"] for n in result["nodes"]}
+    assert "_ready" in labels
+    assert "move" in labels
+    assert "take_damage" in labels
+
+
+def test_extract_gdscript_finds_class_name():
+    """class_name declaration must produce a node."""
+    result = extract_gdscript(FIXTURES / "sample.gd")
+    labels = {n["label"] for n in result["nodes"]}
+    assert "Player" in labels
+
+
+def test_extract_gdscript_finds_extends():
+    """extends BaseClass must produce an inherits edge."""
+    result = extract_gdscript(FIXTURES / "sample.gd")
+    relations = {e["relation"] for e in result["edges"]}
+    assert "inherits" in relations
+
+
+def test_extract_gdscript_finds_preload():
+    """preload() calls must produce imports edges."""
+    result = extract_gdscript(FIXTURES / "sample.gd")
+    relations = {e["relation"] for e in result["edges"]}
+    assert "imports" in relations
+
+
+def test_collect_files_includes_gd(tmp_path):
+    """collect_files must return .gd files (regression #535)."""
+    gd = tmp_path / "player.gd"
+    gd.write_text("extends Node\nfunc _ready(): pass\n")
+    files = collect_files(tmp_path)
+    assert any(f.suffix == ".gd" for f in files)

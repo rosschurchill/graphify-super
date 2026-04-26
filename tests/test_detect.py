@@ -236,3 +236,10 @@ def test_detect_video_not_in_words(tmp_path):
     result = detect(tmp_path)
     # Only video file present — total_words should be 0
     assert result["total_words"] == 0
+
+
+def test_classify_gdscript():
+    """Godot .gd files must be classified as CODE (regression #535)."""
+    from graphify.detect import CODE_EXTENSIONS
+    assert ".gd" in CODE_EXTENSIONS
+    assert classify_file(Path("player.gd")) == FileType.CODE
