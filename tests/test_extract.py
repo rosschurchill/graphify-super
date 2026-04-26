@@ -170,6 +170,20 @@ def test_calls_deduplication():
     assert len(call_pairs) == len(set(call_pairs)), "Duplicate calls edges found"
 
 
+def test_no_node_id_collision_same_filename_different_dirs(tmp_path):
+    """Same class name in same-stem files in different dirs must produce distinct IDs (#550)."""
+    p1 = tmp_path / "admin" / "index.py"
+    p1.parent.mkdir()
+    p1.write_text("class IndexModel:\n    pass\n")
+    p2 = tmp_path / "user" / "index.py"
+    p2.parent.mkdir()
+    p2.write_text("class IndexModel:\n    pass\n")
+    result = extract([p1, p2])
+    model_ids = [n["id"] for n in result["nodes"] if n.get("label") == "IndexModel"]
+    assert len(model_ids) == 2, f"Expected 2 IndexModel nodes, got {model_ids}"
+    assert len(set(model_ids)) == 2, f"ID collision: both nodes have same ID {model_ids}"
+
+
 # ── GDScript regression tests (#535) ─────────────────────────────────────────
 
 def test_extract_gdscript_finds_functions():

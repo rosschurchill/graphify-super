@@ -17,6 +17,9 @@ def _body_content(content: bytes) -> bytes:
     return content
 
 
+_CACHE_SCHEMA_VERSION = b"v2\x00"
+
+
 def file_hash(path: Path, root: Path = Path(".")) -> str:
     """SHA256 of file contents + path relative to root.
 
@@ -33,6 +36,7 @@ def file_hash(path: Path, root: Path = Path(".")) -> str:
     raw = p.read_bytes()
     content = _body_content(raw) if p.suffix.lower() == ".md" else raw
     h = hashlib.sha256()
+    h.update(_CACHE_SCHEMA_VERSION)
     h.update(content)
     h.update(b"\x00")
     try:
