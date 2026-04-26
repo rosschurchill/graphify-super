@@ -183,6 +183,14 @@ def test_agents_uninstall_no_op_when_not_installed(tmp_path, capsys):
     assert "nothing to do" in out
 
 
+def test_codex_hook_emits_additional_context():
+    """_CODEX_HOOK must include additionalContext so Codex gets graph context."""
+    from graphify.__main__ import _CODEX_HOOK
+    hook_cmd = _CODEX_HOOK["hooks"]["PreToolUse"][0]["hooks"][0]["command"]
+    assert "additionalContext" in hook_cmd
+    assert "GRAPH_REPORT.md" in hook_cmd
+
+
 # --- OpenCode plugin tests ---
 
 def test_opencode_agents_install_writes_plugin(tmp_path):
