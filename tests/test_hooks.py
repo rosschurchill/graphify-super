@@ -123,3 +123,22 @@ def test_hook_skips_head_on_exe():
     """Hook script must skip shebang extraction for .exe binaries (Windows)."""
     from graphify.hooks import _PYTHON_DETECT
     assert "*.exe) _SHEBANG=" in _PYTHON_DETECT or '*.exe)' in _PYTHON_DETECT
+
+
+def test_hooks_dir_expands_tilde_in_core_hooks_path(tmp_path, monkeypatch):
+    """core.hooksPath = ~/.git-hooks must resolve to a real path, not a literal tilde."""
+    from graphify.hooks import _hooks_dir
+    repo = _make_git_repo(tmp_path)
+    expanded = tmp_path / "expanded-hooks"
+
+    def fake_run(cmd, **kwargs):
+        class R:
+            returncode = 0
+            stdout = "~/.git-hooks"
+        return R()
+
+    monkeypatch.setattr("graphify.hooks.subprocess.run", fake_run)
+    monkeypatch.setattr("pathlib.Path.expanduser", lambda self: expanded if str(self) == "~/.git-hooks" else self)
+
+    result = _hooks_dir(repo)
+    assert "~" not in str(result)
