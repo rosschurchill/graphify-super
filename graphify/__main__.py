@@ -1008,13 +1008,45 @@ def skills_install(project_dir: Path | None = None, platform: str = "claude") ->
             print("No skills found to install.")
 
 
+def _adapt_skill_for_cursor(content: str) -> str:
+    """Strip Claude Code-isms from a SKILL.md for use as a Cursor command file.
+
+    Removes the ## Trigger section (Cursor uses the filename as the command name)
+    and strips the slash and "Skill" suffix from the H1 title.
+    """
+    import re
+
+    # Fix title: "# /fix Skill" → "# fix" (capitalised)
+    content = re.sub(
+        r"^# /(\S+) Skill\b",
+        lambda m: f"# {m.group(1).capitalize()}",
+        content,
+        count=1,
+        flags=re.MULTILINE,
+    )
+
+    # Remove the ## Trigger block (heading + everything until the next ## or end of file)
+    content = re.sub(
+        r"## Trigger\n.*?(?=\n## |\Z)",
+        "",
+        content,
+        count=1,
+        flags=re.DOTALL,
+    )
+
+    # Collapse any run of 3+ blank lines left behind to at most 2
+    content = re.sub(r"\n{3,}", "\n\n", content)
+
+    return content.strip() + "\n"
+
+
 def _skills_install_cursor(project_dir: Path, src_dir: Path) -> None:
     """Write .cursor/commands/<name>.md for each project skill."""
     commands_dir = project_dir / ".cursor" / "commands"
     commands_dir.mkdir(parents=True, exist_ok=True)
     installed = []
     for name, skill_md in _iter_skills(src_dir):
-        content = skill_md.read_text(encoding="utf-8")
+        content = _adapt_skill_for_cursor(skill_md.read_text(encoding="utf-8"))
         cmd_file = commands_dir / f"{name}.md"
         cmd_file.write_text(content, encoding="utf-8")
         installed.append(name)
