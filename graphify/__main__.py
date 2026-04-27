@@ -964,55 +964,142 @@ def _clone_repo(url: str, branch: str | None = None, out_dir: Path | None = None
     return dest
 
 
-def skills_install(project_dir: Path | None = None) -> None:
-    """Copy all skills from .claude/skills/ to ~/.claude/skills/."""
+def _iter_skills(src_dir: Path):
+    """Yield (name, skill_md_path) for each skill in src_dir."""
+    for skill_dir in sorted(src_dir.iterdir()):
+        if not skill_dir.is_dir():
+            continue
+        skill_md = skill_dir / "SKILL.md"
+        if skill_md.exists():
+            yield skill_dir.name, skill_md
+
+
+def _extract_skill_description(content: str, name: str) -> str:
+    """Pull the one-line description that follows the # /name Skill heading."""
+    m = re.search(r"^# /\w[\w-]* Skill\s*\n+(.+?)(?:\n\n|\n#|\Z)", content, re.DOTALL)
+    if m:
+        return m.group(1).strip().splitlines()[0]
+    return f"/{name} workflow"
+
+
+def skills_install(project_dir: Path | None = None, platform: str = "claude") -> None:
+    """Copy all skills from .claude/skills/ to the target platform's skill directory."""
     src_dir = (project_dir or Path(".")) / ".claude" / "skills"
     if not src_dir.exists():
         print(f"error: no skills directory found at {src_dir}", file=sys.stderr)
         sys.exit(1)
 
-    dst_base = Path.home() / ".claude" / "skills"
-    installed = []
-    for skill_dir in sorted(src_dir.iterdir()):
-        if not skill_dir.is_dir():
-            continue
-        skill_md = skill_dir / "SKILL.md"
-        if not skill_md.exists():
-            continue
-        dst = dst_base / skill_dir.name / "SKILL.md"
-        dst.parent.mkdir(parents=True, exist_ok=True)
-        shutil.copy2(skill_md, dst)
-        installed.append(skill_dir.name)
-        print(f"  installed  /{skill_dir.name}  ->  {dst}")
+    if platform == "cursor":
+        _skills_install_cursor(project_dir or Path("."), src_dir)
+    elif platform == "codex":
+        _skills_install_codex(project_dir or Path("."), src_dir)
+    else:
+        dst_base = Path.home() / ".claude" / "skills"
+        installed = []
+        for name, skill_md in _iter_skills(src_dir):
+            dst = dst_base / name / "SKILL.md"
+            dst.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(skill_md, dst)
+            installed.append(name)
+            print(f"  installed  /{name}  ->  {dst}")
+        if installed:
+            print(f"\n{len(installed)} skill(s) installed. Restart Claude Code to pick them up.")
+        else:
+            print("No skills found to install.")
 
+
+def _skills_install_cursor(project_dir: Path, src_dir: Path) -> None:
+    """Write .cursor/commands/<name>.md for each project skill."""
+    commands_dir = project_dir / ".cursor" / "commands"
+    commands_dir.mkdir(parents=True, exist_ok=True)
+    installed = []
+    for name, skill_md in _iter_skills(src_dir):
+        content = skill_md.read_text(encoding="utf-8")
+        cmd_file = commands_dir / f"{name}.md"
+        cmd_file.write_text(content, encoding="utf-8")
+        installed.append(name)
+        print(f"  installed  /{name}  ->  {cmd_file}")
     if installed:
-        print(f"\n{len(installed)} skill(s) installed. Restart Claude Code to pick them up.")
+        print(f"\n{len(installed)} command(s) installed. Type / in Cursor chat to access them.")
     else:
         print("No skills found to install.")
 
 
-def skills_uninstall(project_dir: Path | None = None) -> None:
-    """Remove skills from ~/.claude/skills/ that came from this repo's .claude/skills/."""
+def _skills_install_codex(project_dir: Path, src_dir: Path) -> None:
+    """Write .agents/skills/<name>/SKILL.md with Codex frontmatter for each project skill."""
+    agents_skills_dir = project_dir / ".agents" / "skills"
+    installed = []
+    for name, skill_md in _iter_skills(src_dir):
+        content = skill_md.read_text(encoding="utf-8")
+        description = _extract_skill_description(content, name)
+        codex_content = f"---\nname: {name}\ndescription: {description}\ntrigger: /{name}\n---\n\n{content}"
+        dst_dir = agents_skills_dir / name
+        dst_dir.mkdir(parents=True, exist_ok=True)
+        (dst_dir / "SKILL.md").write_text(codex_content, encoding="utf-8")
+        installed.append(name)
+        print(f"  installed  /{name}  ->  {dst_dir / 'SKILL.md'}")
+    if installed:
+        print(f"\n{len(installed)} skill(s) installed in .agents/skills/.")
+    else:
+        print("No skills found to install.")
+
+
+def skills_uninstall(project_dir: Path | None = None, platform: str = "claude") -> None:
+    """Remove skills for the target platform."""
     src_dir = (project_dir or Path(".")) / ".claude" / "skills"
     if not src_dir.exists():
         print(f"No skills directory at {src_dir} — nothing to remove.")
         return
 
-    dst_base = Path.home() / ".claude" / "skills"
-    removed = []
-    for skill_dir in sorted(src_dir.iterdir()):
-        if not skill_dir.is_dir():
-            continue
-        dst = dst_base / skill_dir.name
-        if dst.exists():
-            shutil.rmtree(dst)
-            removed.append(skill_dir.name)
-            print(f"  removed  /{skill_dir.name}  from  {dst}")
-
-    if removed:
-        print(f"\n{len(removed)} skill(s) removed.")
+    if platform == "cursor":
+        _skills_uninstall_cursor(project_dir or Path("."), src_dir)
+    elif platform == "codex":
+        _skills_uninstall_codex(project_dir or Path("."), src_dir)
     else:
-        print("No matching skills found in ~/.claude/skills/.")
+        dst_base = Path.home() / ".claude" / "skills"
+        removed = []
+        for name, _ in _iter_skills(src_dir):
+            dst = dst_base / name
+            if dst.exists():
+                shutil.rmtree(dst)
+                removed.append(name)
+                print(f"  removed  /{name}  from  {dst}")
+        if removed:
+            print(f"\n{len(removed)} skill(s) removed.")
+        else:
+            print("No matching skills found in ~/.claude/skills/.")
+
+
+def _skills_uninstall_cursor(project_dir: Path, src_dir: Path) -> None:
+    """Remove .cursor/commands/<name>.md for each project skill."""
+    commands_dir = project_dir / ".cursor" / "commands"
+    removed = []
+    for name, _ in _iter_skills(src_dir):
+        cmd_file = commands_dir / f"{name}.md"
+        if cmd_file.exists():
+            cmd_file.unlink()
+            removed.append(name)
+            print(f"  removed  /{name}  from  {cmd_file}")
+    if removed:
+        print(f"\n{len(removed)} command(s) removed from .cursor/commands/.")
+    else:
+        print("No matching Cursor commands found.")
+
+
+def _skills_uninstall_codex(project_dir: Path, src_dir: Path) -> None:
+    """Remove .agents/skills/<name>/ for each project skill."""
+    agents_skills_dir = project_dir / ".agents" / "skills"
+    removed = []
+    for name, _ in _iter_skills(src_dir):
+        dst_dir = agents_skills_dir / name
+        if dst_dir.exists():
+            shutil.rmtree(dst_dir)
+            removed.append(name)
+            print(f"  removed  /{name}  from  {dst_dir}")
+    if removed:
+        print(f"\n{len(removed)} skill(s) removed from .agents/skills/.")
+    else:
+        print("No matching Codex skills found.")
 
 
 def main() -> None:
@@ -1055,8 +1142,10 @@ def main() -> None:
         print("    --nodes N1 N2 ...       source node labels cited in the answer")
         print("    --memory-dir DIR        memory directory (default: graphify-out/memory)")
         print("  check-update <path>     check needs_update flag and notify if semantic re-extraction is pending (cron-safe)")
-        print("  skills install          copy Claude Code skills from .claude/skills/ to ~/.claude/skills/")
-        print("  skills uninstall        remove those skills from ~/.claude/skills/")
+        print("  skills install          copy project skills to platform skill dir (claude|cursor|codex)")
+        print("    --platform P            target platform (default: claude)")
+        print("  skills uninstall        remove those skills from the platform skill dir")
+        print("    --platform P            target platform (default: claude)")
         print("  benchmark [graph.json]  measure token reduction vs naive full-corpus approach")
         print("  hook install            install post-commit/post-checkout git hooks (all platforms)")
         print("  hook uninstall          remove git hooks")
@@ -1537,12 +1626,17 @@ def main() -> None:
 
     elif cmd == "skills":
         subcmd = sys.argv[2] if len(sys.argv) > 2 else ""
+        plat = "claude"
+        if "--platform" in sys.argv:
+            idx = sys.argv.index("--platform")
+            if idx + 1 < len(sys.argv):
+                plat = sys.argv[idx + 1]
         if subcmd == "install":
-            skills_install()
+            skills_install(platform=plat)
         elif subcmd == "uninstall":
-            skills_uninstall()
+            skills_uninstall(platform=plat)
         else:
-            print("Usage: graphify skills [install|uninstall]", file=sys.stderr)
+            print("Usage: graphify skills [install|uninstall] [--platform claude|cursor|codex]", file=sys.stderr)
             sys.exit(1)
     elif cmd == "benchmark":
         from graphify.benchmark import run_benchmark, print_benchmark
