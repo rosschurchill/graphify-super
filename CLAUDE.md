@@ -85,13 +85,35 @@ Active backlog is in `BACKLOG.md`. The **Session Progress** section at the top o
 
 ## Skills
 
-Project skills live in `.claude/skills/`. Install them on any host with:
+Project skills live in `.claude/skills/`. Each skill is a Markdown workflow file that can be installed into any supported AI coding assistant.
+
+### Install by platform
 
 ```bash
-graphify skills install
+graphify skills install                       # Claude Code (default) → ~/.claude/skills/
+graphify skills install --platform cursor     # Cursor → .cursor/commands/
+graphify skills install --platform codex      # Codex → .agents/skills/
 ```
 
-This copies each skill to `~/.claude/skills/` so Claude Code picks them up. Run after cloning on a new machine.
+Run after cloning on a new machine, or after adding a new skill file.
+
+### Uninstall
+
+```bash
+graphify skills uninstall                     # Claude Code
+graphify skills uninstall --platform cursor   # Cursor
+graphify skills uninstall --platform codex    # Codex
+```
+
+### Platform notes
+
+| Platform | Install location | How to invoke |
+|---|---|---|
+| Claude Code | `~/.claude/skills/<name>/SKILL.md` | Type `/fix`, `/graph` etc. in Claude Code |
+| Cursor | `.cursor/commands/<name>.md` | Type `/` in Cursor chat to see all commands |
+| Codex | `.agents/skills/<name>/SKILL.md` | Codex reads skills from `.agents/skills/` at project root |
+
+### Available skills
 
 | Command | What it does |
 |---|---|
@@ -104,6 +126,12 @@ This copies each skill to `~/.claude/skills/` so Claude Code picks them up. Run 
 | `/map-sec <feature>` | Security audit of a feature → `.claude/context/security-<feature>.md` |
 | `/arch <feature>` | Architecture review → `.claude/context/arch-<feature>.md` |
 | `/perf <feature>` | Performance audit → `.claude/context/perf-<feature>.md` |
+
+### Adding a new skill
+
+1. Create `.claude/skills/<name>/SKILL.md` following the existing skill format (heading, Trigger, Steps sections)
+2. Run `graphify skills install` (and `--platform cursor`/`--platform codex` if needed)
+3. The skill is automatically picked up — no registration step required for Cursor or Codex
 
 # fix
 - **fix** (`.claude/skills/fix/SKILL.md`) - pick up next BACKLOG item, verify, fix, test, commit. Trigger: `/fix`
