@@ -16,8 +16,10 @@ build/
 graphify-out/
 .graphify_*.json
 .graphify_python
-.claude/
-skills/
+.claude/context/
+.claude/settings.json
+.claude/settings.local.json
+/skills/
 docs/superpowers/
 .vscode/
 openspec/

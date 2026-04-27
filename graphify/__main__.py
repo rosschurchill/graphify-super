@@ -964,6 +964,57 @@ def _clone_repo(url: str, branch: str | None = None, out_dir: Path | None = None
     return dest
 
 
+def skills_install(project_dir: Path | None = None) -> None:
+    """Copy all skills from .claude/skills/ to ~/.claude/skills/."""
+    src_dir = (project_dir or Path(".")) / ".claude" / "skills"
+    if not src_dir.exists():
+        print(f"error: no skills directory found at {src_dir}", file=sys.stderr)
+        sys.exit(1)
+
+    dst_base = Path.home() / ".claude" / "skills"
+    installed = []
+    for skill_dir in sorted(src_dir.iterdir()):
+        if not skill_dir.is_dir():
+            continue
+        skill_md = skill_dir / "SKILL.md"
+        if not skill_md.exists():
+            continue
+        dst = dst_base / skill_dir.name / "SKILL.md"
+        dst.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(skill_md, dst)
+        installed.append(skill_dir.name)
+        print(f"  installed  /{skill_dir.name}  ->  {dst}")
+
+    if installed:
+        print(f"\n{len(installed)} skill(s) installed. Restart Claude Code to pick them up.")
+    else:
+        print("No skills found to install.")
+
+
+def skills_uninstall(project_dir: Path | None = None) -> None:
+    """Remove skills from ~/.claude/skills/ that came from this repo's .claude/skills/."""
+    src_dir = (project_dir or Path(".")) / ".claude" / "skills"
+    if not src_dir.exists():
+        print(f"No skills directory at {src_dir} — nothing to remove.")
+        return
+
+    dst_base = Path.home() / ".claude" / "skills"
+    removed = []
+    for skill_dir in sorted(src_dir.iterdir()):
+        if not skill_dir.is_dir():
+            continue
+        dst = dst_base / skill_dir.name
+        if dst.exists():
+            shutil.rmtree(dst)
+            removed.append(skill_dir.name)
+            print(f"  removed  /{skill_dir.name}  from  {dst}")
+
+    if removed:
+        print(f"\n{len(removed)} skill(s) removed.")
+    else:
+        print("No matching skills found in ~/.claude/skills/.")
+
+
 def main() -> None:
     # Check all known skill install locations for a stale version stamp.
     # Skip during install/uninstall (hook writes trigger a fresh check anyway).
@@ -1004,6 +1055,8 @@ def main() -> None:
         print("    --nodes N1 N2 ...       source node labels cited in the answer")
         print("    --memory-dir DIR        memory directory (default: graphify-out/memory)")
         print("  check-update <path>     check needs_update flag and notify if semantic re-extraction is pending (cron-safe)")
+        print("  skills install          copy Claude Code skills from .claude/skills/ to ~/.claude/skills/")
+        print("  skills uninstall        remove those skills from ~/.claude/skills/")
         print("  benchmark [graph.json]  measure token reduction vs naive full-corpus approach")
         print("  hook install            install post-commit/post-checkout git hooks (all platforms)")
         print("  hook uninstall          remove git hooks")
@@ -1482,6 +1535,15 @@ def main() -> None:
         local_path = _clone_repo(url, branch=branch, out_dir=out_dir)
         print(local_path)
 
+    elif cmd == "skills":
+        subcmd = sys.argv[2] if len(sys.argv) > 2 else ""
+        if subcmd == "install":
+            skills_install()
+        elif subcmd == "uninstall":
+            skills_uninstall()
+        else:
+            print("Usage: graphify skills [install|uninstall]", file=sys.stderr)
+            sys.exit(1)
     elif cmd == "benchmark":
         from graphify.benchmark import run_benchmark, print_benchmark
         graph_path = sys.argv[2] if len(sys.argv) > 2 else "graphify-out/graph.json"
