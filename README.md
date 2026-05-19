@@ -536,6 +536,9 @@ git clone https://github.com/safishamsi/graphify.git
 cd graphify
 git checkout v8                        # active development branch
 
+# Note: this graphify-super fork tracks upstream `v8` on local branch `v4`;
+# check out `v4` here instead if you are working on the fork.
+
 # Create a virtual environment (Python 3.10+ required):
 python3 -m venv .venv
 source .venv/bin/activate              # Windows: .venv\Scripts\activate

@@ -4,8 +4,8 @@
 
 | Version | Supported |
 |---------|-----------|
-| 0.3.x   | Yes       |
-| < 0.3   | No        |
+| 0.8.x   | Yes       |
+| < 0.8   | No        |
 
 ## Reporting a Vulnerability
 
@@ -22,7 +22,7 @@ We will acknowledge receipt within 48 hours and aim to release a fix within 7 da
 
 ## Security Model
 
-graphify is a **local development tool**. It runs as a Claude Code skill and optionally as a local MCP stdio server. It makes no network calls during graph analysis - only during `ingest` (explicit URL fetch by the user).
+graphify is a **local development tool**. It runs as a Claude Code skill and optionally as a local MCP stdio server. AST-based graph analysis makes no network calls. Semantic extraction of docs, PDFs, images, and videos calls the configured LLM backend (Claude, Gemini, OpenAI, or Kimi via `graphify/llm.py`); URL ingestion (`graphify ingest`) makes explicit user-initiated fetches via `safe_fetch()`.
 
 ### Threat Surface
 

@@ -29,6 +29,14 @@ Each stage is a single function in its own module. They communicate through plai
 | `serve.py` | `start_server(graph_path)` | graph file path → MCP stdio server |
 | `watch.py` | `watch(root, flag_path)` | directory → writes flag file on change |
 | `benchmark.py` | `run_benchmark(graph_path)` | graph file → corpus vs subgraph token comparison |
+| `dedup.py` | `deduplicate_entities(nodes, edges, ...)` | nodes+edges → merged nodes+edges (exact norm → entropy gate → MinHash/LSH blocking → Jaro-Winkler → union-find) |
+| `manifest.py` | `save_manifest / load_manifest / detect_incremental` | thin re-export shim around the same helpers in `detect.py` (kept for backwards-compatible imports) |
+| `llm.py` | `_call_llm(prompt, backend, ...)` / direct extractors | prompt + backend choice → semantic extraction dict; supports Claude, Gemini, OpenAI, Kimi |
+| `prs.py` | `graphify prs` CLI entry | open PRs (via `gh`) → terminal dashboard with CI/review state, worktree mapping, graph-impact, optional Opus triage |
+| `global_graph.py` | `update_global / load_global` | per-repo `graph.json` → aggregated graph under `~/.graphify/` (cross-repo view) |
+| `google_workspace.py` | `export_shortcuts(paths)` | `.gdoc/.gsheet/.gslides` shortcut files → Markdown sidecars via the `gws` CLI |
+| `transcribe.py` | `transcribe(path)` | video/audio file (mp4/mov/mp3/wav/...) → text transcript via `faster-whisper` |
+| `tree_html.py` | `write_tree_html(graph_path, out)` | graph file → self-contained D3 v7 collapsible-tree HTML view (printable module overview) |
 
 ## Extraction output schema
 
@@ -57,11 +65,13 @@ Every extractor returns:
 
 ## Adding a new language extractor
 
-1. Add a `extract_<lang>(path: Path) -> dict` function in `extract.py` following the existing pattern (tree-sitter parse → walk nodes → collect `nodes` and `edges` → call-graph second pass for INFERRED `calls` edges).
-2. Register the file suffix in `extract()` dispatch and `collect_files()`.
+1. Add a `extract_<lang>(path: Path) -> dict` function in `extract.py` following the existing pattern (tree-sitter parse → walk nodes → collect `nodes` and `edges` → call-graph second pass for INFERRED `calls` edges). For simple languages, add only a `LanguageConfig` and let `_extract_generic` handle the walk.
+2. Register the file suffix in the `_DISPATCH` table (`extract.py`) and the `_get_extractor` registry.
 3. Add the suffix to `CODE_EXTENSIONS` in `detect.py` and `_WATCHED_EXTENSIONS` in `watch.py`.
 4. Add the tree-sitter package to `pyproject.toml` dependencies.
 5. Add a fixture file to `tests/fixtures/` and tests to `tests/test_languages.py`.
+
+`dedup.py` (entity deduplication) and `manifest.py` (re-export shim around `detect.py`) are language-agnostic and need **no** per-language entries. The incremental-update path (`detect_incremental` → `build_merge`) inherits the new extension automatically via `CODE_EXTENSIONS`.
 
 ## Security
 
