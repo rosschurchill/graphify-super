@@ -21,6 +21,7 @@
 #    before any graph construction happens.
 #
 from __future__ import annotations
+import hashlib
 import json
 import os
 import re
@@ -278,6 +279,33 @@ def deduplicate_by_label(nodes: list[dict], edges: list[dict]) -> tuple[list[dic
     return deduped_nodes, deduped_edges
 
 
+def _dedup_fingerprint(nodes: list[dict], dedup_llm_backend: str | None) -> str:
+    """SHA256 fingerprint of the combined node corpus + LLM backend for dedup caching (H9).
+
+    Covers sorted (id, label) pairs plus the backend name so that:
+    - adding new nodes invalidates the fingerprint (dedup re-runs)
+    - changing the backend invalidates the fingerprint (LLM tiebreaks may differ)
+    - label edits invalidate the fingerprint (merge decisions may change)
+    """
+    h = hashlib.sha256()
+    # Use set semantics so duplicate (id, label) pairs don't affect the hash.
+    # Without this, `existing_nodes + new_nodes` (where new_nodes are already
+    # a subset of existing) produces a different fingerprint each incremental
+    # run because list sorting preserves duplicates. Set deduplication ensures
+    # that adding nodes already present in the graph does not invalidate the
+    # cache (H9).
+    unique = sorted({(n.get("id", ""), n.get("label", "")) for n in nodes})
+    for nid, label in unique:
+        h.update(f"{nid}\x00{label}\n".encode())
+    h.update((dedup_llm_backend or "").encode())
+    return h.hexdigest()
+
+
+def _dedup_fingerprint_path(graph_path: Path) -> Path:
+    """Return the path where the dedup fingerprint is cached."""
+    return graph_path.parent / "cache" / "dedup-fingerprint.json"
+
+
 def build_merge(
     new_chunks: list[dict],
     graph_path: str | Path = "graphify-out/graph.json",
@@ -293,6 +321,10 @@ def build_merge(
     Never replaces - only grows (or prunes deleted-file nodes via prune_sources).
     Safe to call repeatedly: existing nodes and edges are preserved.
     root: if given, absolute source_file paths in new_chunks are made relative (#932).
+
+    H9: on incremental updates where the combined node corpus fingerprint matches
+    the cached fingerprint from the previous successful dedup run and prune_sources
+    is empty, the full dedup pass is skipped (O(N) → O(ΔN) for `graphify update`).
     """
     graph_path = Path(graph_path)
     if graph_path.exists():
@@ -313,7 +345,41 @@ def build_merge(
         base = []
 
     all_chunks = base + list(new_chunks)
-    G = build(all_chunks, directed=directed, dedup=dedup, dedup_llm_backend=dedup_llm_backend, root=root)
+
+    # H9: skip dedup when fingerprint is unchanged (incremental update, no pruning).
+    # Dedup is O(N·log N) MinHash + potentially O(C²) for LLM tiebreaks; skipping it
+    # on unchanged corpora makes `graphify update .` after a 1-file change O(ΔN).
+    effective_dedup = dedup
+    if dedup and not prune_sources and graph_path.exists():
+        combined_nodes: list[dict] = []
+        for chunk in all_chunks:
+            combined_nodes.extend(chunk.get("nodes", []))
+        fp = _dedup_fingerprint(combined_nodes, dedup_llm_backend)
+        fp_path = _dedup_fingerprint_path(graph_path)
+        try:
+            saved = json.loads(fp_path.read_text(encoding="utf-8"))
+            if saved.get("fingerprint") == fp:
+                effective_dedup = False
+        except (OSError, json.JSONDecodeError, AttributeError):
+            pass
+
+    G = build(all_chunks, directed=directed, dedup=effective_dedup, dedup_llm_backend=dedup_llm_backend, root=root)
+
+    # Persist fingerprint after a successful dedup run so next incremental update can skip it.
+    if dedup and effective_dedup:
+        all_nodes_for_fp: list[dict] = []
+        for chunk in all_chunks:
+            all_nodes_for_fp.extend(chunk.get("nodes", []))
+        fp = _dedup_fingerprint(all_nodes_for_fp, dedup_llm_backend)
+        fp_path = _dedup_fingerprint_path(graph_path)
+        try:
+            fp_path.parent.mkdir(parents=True, exist_ok=True)
+            fp_path.write_text(
+                json.dumps({"fingerprint": fp}, separators=(",", ":")),
+                encoding="utf-8",
+            )
+        except OSError:
+            pass
 
     # Prune nodes and edges from deleted source files
     if prune_sources:

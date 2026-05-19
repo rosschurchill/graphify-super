@@ -3,7 +3,6 @@ from __future__ import annotations
 import contextlib
 import inspect
 import io
-import json
 import sys
 import networkx as nx
 
@@ -33,14 +32,11 @@ def _partition(G: nx.Graph, resolution: float = 1.0) -> dict[str, int]:
     """
     stable = nx.Graph()
     stable.add_nodes_from(sorted(G.nodes(), key=str))
-    edge_rows = sorted(
-        G.edges(data=True),
-        key=lambda row: (
-            str(row[0]),
-            str(row[1]),
-            json.dumps(row[2], sort_keys=True, ensure_ascii=False, default=str),
-        ),
-    )
+    # Sort edges by (src, tgt) string keys only — Leiden/Louvain reproducibility
+    # is guaranteed by random_seed=42, so the JSON-serialised attrs sort key
+    # bought nothing except O(E) json.dumps calls on every _partition invocation
+    # (10–100× slower on large graphs). Dropped for C7.
+    edge_rows = sorted(G.edges(data=True), key=lambda row: (str(row[0]), str(row[1])))
     for src, tgt, attrs in edge_rows:
         stable.add_edge(src, tgt, **attrs)
 

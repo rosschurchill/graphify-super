@@ -120,6 +120,10 @@ _MERGE_THRESHOLD = 92.0     # rapidfuzz normalized_similarity * 100
 _COMMUNITY_BOOST = 5.0      # score bonus when both nodes share community
 _NUM_PERM = 128
 _CHUNK_SUFFIX = re.compile(r"_c\d+$")
+# H8: cap the LLM tiebreak candidate pool to prevent O(C²) blowup.
+# Beyond this many candidates the O(C²) JW scan costs more than any merge gain.
+# Candidates are ranked by entropy descending (highest ambiguity first) before truncation.
+_LLM_TIEBREAK_MAX_CANDIDATES = 500
 
 
 # ── main entry point ──────────────────────────────────────────────────────────
@@ -205,6 +209,8 @@ def deduplicate_entities(
     if len(candidates) >= 2:
         lsh = MinHashLSH(threshold=_LSH_THRESHOLD, num_perm=_NUM_PERM)
         minhashes: dict[str, MinHash] = {}
+        # O(1) id→node lookup to replace the O(C) next() per LSH neighbour (#19).
+        candidate_by_id: dict[str, dict] = {n["id"]: n for n in candidates}
 
         for node in candidates:
             norm_label = _norm(node.get("label", node.get("id", "")))
@@ -226,7 +232,7 @@ def deduplicate_entities(
                 if uf.find(node_id) == uf.find(neighbor_id):
                     continue
 
-                neighbor = next((n for n in candidates if n["id"] == neighbor_id), None)
+                neighbor = candidate_by_id.get(neighbor_id)
                 if neighbor is None:
                     continue
 
@@ -342,11 +348,33 @@ def _llm_tiebreak(
     except ImportError:
         return
 
+    # H8: bound candidate pool to _LLM_TIEBREAK_MAX_CANDIDATES before the
+    # O(C²) inner loop. Sort by entropy descending so highest-ambiguity nodes
+    # are prioritised; pairs beyond the cap are skipped silently.
+    if len(candidates) > _LLM_TIEBREAK_MAX_CANDIDATES:
+        sorted_candidates = sorted(
+            candidates,
+            key=lambda n: _entropy(n.get("label", n.get("id", ""))),
+            reverse=True,
+        )
+        effective_candidates = sorted_candidates[:_LLM_TIEBREAK_MAX_CANDIDATES]
+        skipped = len(candidates) - _LLM_TIEBREAK_MAX_CANDIDATES
+        print(
+            f"[graphify] --dedup-llm: candidate pool capped at {_LLM_TIEBREAK_MAX_CANDIDATES} "
+            f"({skipped} low-entropy candidates skipped).",
+            flush=True,
+        )
+    else:
+        effective_candidates = candidates
+
+    # Build O(1) id→node lookup to replace O(C) next() scans (audit #19).
+    candidate_by_id: dict[str, dict] = {n["id"]: n for n in effective_candidates}
+
     ambiguous: list[tuple[dict, dict, float]] = []
-    for i, node in enumerate(candidates):
+    for i, node in enumerate(effective_candidates):
         norm_i = _norm(node.get("label", node.get("id", "")))
-        for j in range(i + 1, len(candidates)):
-            neighbor = candidates[j]
+        for j in range(i + 1, len(effective_candidates)):
+            neighbor = effective_candidates[j]
             if uf.find(node["id"]) == uf.find(neighbor["id"]):
                 continue
             norm_j = _norm(neighbor.get("label", neighbor.get("id", "")))
