@@ -7,18 +7,15 @@ from pathlib import Path
 import networkx as nx
 from networkx.readwrite import json_graph as _jg
 
+from graphify.constants import load_json_with_fallback as _load_json
+
 _GLOBAL_DIR = Path.home() / ".graphify"
 _GLOBAL_GRAPH = _GLOBAL_DIR / "global-graph.json"
 _GLOBAL_MANIFEST = _GLOBAL_DIR / "global-manifest.json"
 
 
 def _load_manifest() -> dict:
-    if _GLOBAL_MANIFEST.exists():
-        try:
-            return json.loads(_GLOBAL_MANIFEST.read_text(encoding="utf-8"))
-        except Exception:
-            pass
-    return {"version": 1, "repos": {}}
+    return _load_json(_GLOBAL_MANIFEST, {"version": 1, "repos": {}})
 
 
 def _save_manifest(manifest: dict) -> None:
@@ -27,8 +24,15 @@ def _save_manifest(manifest: dict) -> None:
 
 
 def _load_global_graph() -> nx.Graph:
+    # Path-traversal guard (C2): pin reads to ~/.graphify/. The path is fixed
+    # today, but the guard ensures any future refactor that accepts a caller-
+    # supplied path inherits the constraint instead of silently regressing.
+    from graphify.security import validate_graph_path
+
     if _GLOBAL_GRAPH.exists():
-        data = json.loads(_GLOBAL_GRAPH.read_text(encoding="utf-8"))
+        _GLOBAL_DIR.mkdir(parents=True, exist_ok=True)
+        safe = validate_graph_path(_GLOBAL_GRAPH, base=_GLOBAL_DIR.resolve())
+        data = json.loads(safe.read_text(encoding="utf-8"))
         if "links" not in data and "edges" in data:
             data = dict(data, links=data["edges"])
         try:

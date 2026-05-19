@@ -316,11 +316,19 @@ def fetch_worktrees() -> dict[str, str]:
 # ── Graph impact analysis ─────────────────────────────────────────────────────
 
 def _load_graph_json(graph_path: Path) -> dict | None:
+    # Path-traversal guard (C2): confine reads to the graph's parent dir so a
+    # caller passing an attacker-supplied path cannot exfiltrate arbitrary JSON
+    # files via the PR-impact tool. validate_graph_path raises on missing base
+    # or on traversal; we preserve this function's existing "return None on any
+    # failure" contract so PR triage degrades gracefully before any graph exists.
+    from graphify.security import validate_graph_path
+
     if not graph_path.exists():
         return None
     try:
-        return json.loads(graph_path.read_text(encoding="utf-8"))
-    except (json.JSONDecodeError, OSError):
+        safe = validate_graph_path(graph_path, base=graph_path.resolve().parent)
+        return json.loads(safe.read_text(encoding="utf-8"))
+    except (ValueError, FileNotFoundError, json.JSONDecodeError, OSError):
         return None
 
 

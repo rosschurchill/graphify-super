@@ -13,7 +13,6 @@ from pathlib import Path
 # absolute path ("/shared/graphify-out").
 _GRAPHIFY_OUT = os.environ.get("GRAPHIFY_OUT", "graphify-out")
 
-
 def _body_content(content: bytes) -> bytes:
     """Strip YAML frontmatter from Markdown content, returning only the body."""
     text = content.decode(errors="replace")
@@ -36,9 +35,16 @@ _stat_index_dirty: bool = False
 
 
 def _stat_index_file(root: Path) -> Path:
+    """Return the per-process stat-index shard path (H11: PID-partitioned).
+
+    Calls os.getpid() at invocation time — not at module import — so forked
+    workers each get their own shard path rather than inheriting the parent's
+    PID via copy-on-write. On load, _ensure_stat_index merges all shards into
+    memory. The legacy stat-index.json is still read for backward compatibility.
+    """
     _out = Path(_GRAPHIFY_OUT)
     base = _out if _out.is_absolute() else Path(root).resolve() / _out
-    return base / "cache" / "stat-index.json"
+    return base / "cache" / f"stat-index-{os.getpid()}.json"
 
 
 def _ensure_stat_index(root: Path) -> None:
@@ -46,14 +52,23 @@ def _ensure_stat_index(root: Path) -> None:
     if _stat_index_root is not None:
         return
     _stat_index_root = Path(root).resolve()
-    p = _stat_index_file(_stat_index_root)
-    if p.exists():
-        try:
-            _stat_index = json.loads(p.read_text(encoding="utf-8"))
-        except (json.JSONDecodeError, OSError):
-            _stat_index = {}
-    else:
-        _stat_index = {}
+    _out = Path(_GRAPHIFY_OUT)
+    cache_dir_path = (_out if _out.is_absolute() else _stat_index_root / _out) / "cache"
+
+    # Merge all shard files (including legacy stat-index.json) into memory.
+    # Each shard was written by a different worker PID; merging them here means
+    # this process benefits from every previous worker's cached stat results.
+    merged: dict[str, dict] = {}
+    if cache_dir_path.is_dir():
+        shard_files = list(cache_dir_path.glob("stat-index*.json"))
+        for shard in shard_files:
+            try:
+                data = json.loads(shard.read_text(encoding="utf-8"))
+                if isinstance(data, dict):
+                    merged.update(data)
+            except (json.JSONDecodeError, OSError):
+                pass
+    _stat_index = merged
     atexit.register(_flush_stat_index)
 
 
@@ -61,6 +76,7 @@ def _flush_stat_index() -> None:
     global _stat_index_dirty, _stat_index_root
     if not _stat_index_dirty or _stat_index_root is None:
         return
+    # Write to this process's own PID-partitioned shard (H11).
     p = _stat_index_file(_stat_index_root)
     try:
         p.parent.mkdir(parents=True, exist_ok=True)
@@ -318,12 +334,25 @@ def save_semantic_cache(
         if src:
             by_file[src]["hyperedges"].append(h)
 
+    # C4: the LLM-returned source_file is a string under the model's control.
+    # Without a containment check, a hostile corpus document could nudge the
+    # model into emitting an absolute path like "/etc/passwd" or "../secrets"
+    # — Path(root) / "/etc/passwd" silently discards `root`, and the cache
+    # write then succeeds against the attacker-chosen filesystem location.
+    # Resolve under root and skip (don't raise) any entry that escapes it.
+    root_resolved = Path(root).resolve()
     saved = 0
     for fpath, result in by_file.items():
         p = Path(fpath)
         if not p.is_absolute():
             p = Path(root) / p
-        if p.is_file():
-            save_cached(p, result, root, kind="semantic")
+        try:
+            resolved = p.resolve()
+            resolved.relative_to(root_resolved)
+        except (OSError, ValueError):
+            # Path escapes project root — refuse to persist as cache entry.
+            continue
+        if resolved.is_file():
+            save_cached(resolved, result, root, kind="semantic")
             saved += 1
     return saved

@@ -85,11 +85,92 @@ def _fetch_html(url: str) -> str:
     return safe_fetch_text(url)
 
 
+def _strip_script_style(html_doc: str) -> str:
+    """Drop <script>/<style> subtrees with a real HTML parser (H6).
+
+    The previous implementation used a regex pattern
+    ``<script[^>]*>.*?</script>`` which is bypassable in many ways: malformed
+    open tags (``<script foo=">"``), missing close tag, nested ``<script>``,
+    or HTML5 raw-text quirks. A proper parser walks the document and ignores
+    everything between matching open/close (or to EOF), which is the only
+    bypass-resistant approach without adding a new runtime dependency.
+
+    We prefer bs4 when available (more permissive parser for real-world HTML)
+    and fall back to stdlib ``html.parser.HTMLParser`` otherwise so the guard
+    works in every install profile.
+    """
+    try:
+        from bs4 import BeautifulSoup  # type: ignore
+        soup = BeautifulSoup(html_doc, "html.parser")
+        for tag in soup(["script", "style"]):
+            tag.decompose()
+        return str(soup)
+    except ImportError:
+        pass
+
+    from html.parser import HTMLParser
+
+    class _Stripper(HTMLParser):
+        def __init__(self) -> None:
+            super().__init__(convert_charrefs=False)
+            self.out: list[str] = []
+            self._skip_depth = 0
+            self._skip_tag: str | None = None
+
+        def handle_starttag(self, tag: str, attrs):  # noqa: D401
+            if tag in ("script", "style"):
+                if self._skip_depth == 0:
+                    self._skip_tag = tag
+                self._skip_depth += 1
+                return
+            if self._skip_depth:
+                return
+            attr_str = "".join(
+                f' {k}="{(v or "").replace(chr(34), "&quot;")}"'
+                for k, v in attrs
+            )
+            self.out.append(f"<{tag}{attr_str}>")
+
+        def handle_endtag(self, tag: str):
+            if self._skip_depth and tag == self._skip_tag:
+                self._skip_depth -= 1
+                if self._skip_depth == 0:
+                    self._skip_tag = None
+                return
+            if self._skip_depth:
+                return
+            self.out.append(f"</{tag}>")
+
+        def handle_startendtag(self, tag, attrs):
+            if tag in ("script", "style"):
+                return
+            self.handle_starttag(tag, attrs)
+            self.handle_endtag(tag)
+
+        def handle_data(self, data: str):
+            if self._skip_depth:
+                return
+            self.out.append(data)
+
+        def handle_entityref(self, name: str):
+            if not self._skip_depth:
+                self.out.append(f"&{name};")
+
+        def handle_charref(self, name: str):
+            if not self._skip_depth:
+                self.out.append(f"&#{name};")
+
+    parser = _Stripper()
+    parser.feed(html_doc)
+    parser.close()
+    return "".join(parser.out)
+
+
 def _html_to_markdown(html: str, url: str) -> str:
     """Convert HTML to clean markdown. Uses markdownify if available, else basic strip."""
-    # Always pre-strip script/style so their text content never leaks into output
-    html = re.sub(r"<script[^>]*>.*?</script>", "", html, flags=re.DOTALL | re.IGNORECASE)
-    html = re.sub(r"<style[^>]*>.*?</style>", "", html, flags=re.DOTALL | re.IGNORECASE)
+    # H6: pre-strip script/style with a real parser; the previous regex pass
+    # was bypassable by malformed tags and unclosed elements.
+    html = _strip_script_style(html)
     try:
         from markdownify import markdownify
         return markdownify(html, heading_style="ATX", bullets="-", strip=["img"])

@@ -6,6 +6,7 @@ from pathlib import Path
 import networkx as nx
 
 from graphify.build import edge_data
+from graphify.security import sanitize_label
 
 
 def _safe_filename(name: str) -> str:
@@ -54,7 +55,10 @@ def _community_article(
             conf_counts[ed.get("confidence", "EXTRACTED")] += 1
     total_edges = sum(conf_counts.values()) or 1
 
-    sources = sorted({G.nodes[n].get("source_file", "") for n in nodes} - {""})
+    # Sanitise sources before writing into markdown (C3): LLM-generated nodes
+    # can carry control chars / oversized strings that break the rendered wiki
+    # and provide a prompt-injection surface for downstream agents.
+    sources = sorted({sanitize_label(G.nodes[n].get("source_file", "")) for n in nodes} - {""})
 
     lines: list[str] = []
     lines += [f"# {label}", ""]
@@ -67,8 +71,11 @@ def _community_article(
     lines += ["## Key Concepts", ""]
     for nid in top_nodes:
         d = G.nodes[nid]
-        node_label = d.get("label", nid)
-        src = d.get("source_file", "")
+        # C3: every LLM-derived field passes through sanitize_label before
+        # being embedded in markdown so a hostile corpus entry cannot inject
+        # control chars, fake headings, or wiki-link syntax.
+        node_label = sanitize_label(d.get("label", nid))
+        src = sanitize_label(d.get("source_file", ""))
         degree = G.degree(nid)
         src_str = f" — `{src}`" if src else ""
         lines.append(f"- **{node_label}** ({degree} connections){src_str}")
@@ -104,8 +111,9 @@ def _community_article(
 
 def _god_node_article(G: nx.Graph, nid: str, labels: dict[int, str], node_community: dict[str, int] | None = None) -> str:
     d = G.nodes[nid]
-    node_label = d.get("label", nid)
-    src = d.get("source_file", "")
+    # C3: sanitise label + source_file before writing markdown.
+    node_label = sanitize_label(d.get("label", nid))
+    src = sanitize_label(d.get("source_file", ""))
     cid = (node_community or {}).get(nid)
     community_name = labels.get(cid, f"Community {cid}") if cid is not None else None
 
@@ -121,9 +129,10 @@ def _god_node_article(G: nx.Graph, nid: str, labels: dict[int, str], node_commun
     for neighbor in sorted(G.neighbors(nid), key=lambda n: G.degree(n), reverse=True):
         nd = G.nodes[neighbor]
         ed = edge_data(G, nid, neighbor)
-        rel = ed.get("relation", "related")
-        neighbor_label = nd.get("label", neighbor)
-        conf = ed.get("confidence", "")
+        # C3: relation / neighbor label / confidence are all LLM-influenced.
+        rel = sanitize_label(ed.get("relation", "related")) or "related"
+        neighbor_label = sanitize_label(nd.get("label", neighbor))
+        conf = sanitize_label(str(ed.get("confidence", "")))
         conf_str = f" `{conf}`" if conf else ""
         by_relation.setdefault(rel, []).append(f"[[{neighbor_label}]]{conf_str}")
 
@@ -160,14 +169,16 @@ def _index_md(
     ]
 
     for cid, nodes in sorted(communities.items(), key=lambda x: -len(x[1])):
-        label = labels.get(cid, f"Community {cid}")
+        # C3: community labels can be LLM-generated.
+        label = sanitize_label(labels.get(cid, f"Community {cid}"))
         lines.append(f"- [[{label}]] — {len(nodes)} nodes")
     lines.append("")
 
     if god_nodes_data:
         lines += ["## God Nodes", "(most connected concepts — the load-bearing abstractions)", ""]
         for node in god_nodes_data:
-            lines.append(f"- [[{node['label']}]] — {node['degree']} connections")
+            god_label = sanitize_label(node.get("label", ""))
+            lines.append(f"- [[{god_label}]] — {node['degree']} connections")
         lines.append("")
 
     lines += [

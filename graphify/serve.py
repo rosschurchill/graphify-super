@@ -6,7 +6,7 @@ import sys
 from pathlib import Path
 import networkx as nx
 from networkx.readwrite import json_graph
-from graphify.security import sanitize_label
+from graphify.security import sanitize_label, validate_graph_path
 from graphify.build import edge_data
 
 
@@ -15,9 +15,14 @@ def _load_graph(graph_path: str) -> nx.Graph:
         resolved = Path(graph_path).resolve()
         if resolved.suffix != ".json":
             raise ValueError(f"Graph path must be a .json file, got: {graph_path!r}")
-        if not resolved.exists():
-            raise FileNotFoundError(f"Graph file not found: {resolved}")
-        safe = resolved
+        # Path-traversal guard (C2): confine reads to the directory that holds
+        # the requested graph.json. Without this the MCP client could pass any
+        # absolute .json path (e.g. /etc/secrets/foo.json) and have its bytes
+        # parsed and reflected back through query_graph output.
+        base = resolved.parent
+        if not base.exists():
+            raise FileNotFoundError(f"Graph directory not found: {base}")
+        safe = validate_graph_path(resolved, base=base)
         data = json.loads(safe.read_text(encoding="utf-8"))
         if "links" not in data and "edges" in data:
             data = dict(data, links=data["edges"])

@@ -4,6 +4,8 @@ import re
 from datetime import date
 import networkx as nx
 
+from graphify.security import sanitize_label
+
 
 def _safe_community_name(label: str) -> str:
     """Mirrors export.safe_name so community hub filenames and report wikilinks always agree."""
@@ -97,23 +99,28 @@ def generate(
         "## God Nodes (most connected - your core abstractions)",
     ]
     for i, node in enumerate(god_node_list, 1):
-        lines.append(f"{i}. `{node['label']}` - {node['degree']} edges")
+        # C3: every LLM-derived field passes through sanitize_label.
+        lines.append(f"{i}. `{sanitize_label(node.get('label', ''))}` - {node['degree']} edges")
 
     lines += ["", "## Surprising Connections (you probably didn't know these)"]
     if surprise_list:
         for s in surprise_list:
-            relation = s.get("relation", "related_to")
-            note = s.get("note", "")
-            files = s.get("source_files", ["", ""])
-            conf = s.get("confidence", "EXTRACTED")
+            # C3: sanitise every LLM-influenced field before embedding in markdown.
+            relation = sanitize_label(s.get("relation", "related_to")) or "related_to"
+            note = sanitize_label(s.get("note", ""))
+            raw_files = s.get("source_files", ["", ""])
+            files = [sanitize_label(str(f)) for f in raw_files] + ["", ""]
+            conf = sanitize_label(str(s.get("confidence", "EXTRACTED"))) or "EXTRACTED"
             cscore = s.get("confidence_score")
             if conf == "INFERRED" and cscore is not None:
                 conf_tag = f"INFERRED {cscore:.2f}"
             else:
                 conf_tag = conf
             sem_tag = " [semantically similar]" if relation == "semantically_similar_to" else ""
+            src_label = sanitize_label(str(s.get('source', '')))
+            tgt_label = sanitize_label(str(s.get('target', '')))
             lines += [
-                f"- `{s['source']}` --{relation}--> `{s['target']}`  [{conf_tag}]{sem_tag}",
+                f"- `{src_label}` --{relation}--> `{tgt_label}`  [{conf_tag}]{sem_tag}",
                 f"  {files[0]} → {files[1]}" + (f"  _{note}_" if note else ""),
             ]
     else:
@@ -123,15 +130,18 @@ def generate(
     if hyperedges:
         lines += ["", "## Hyperedges (group relationships)"]
         for h in hyperedges:
-            node_labels = ", ".join(h.get("nodes", []))
-            conf = h.get("confidence", "INFERRED")
+            # C3: hyperedge labels and node identifiers may be LLM-derived.
+            node_labels = ", ".join(sanitize_label(str(n)) for n in h.get("nodes", []))
+            conf = sanitize_label(str(h.get("confidence", "INFERRED"))) or "INFERRED"
             cscore = h.get("confidence_score")
             conf_tag = f"{conf} {cscore:.2f}" if cscore is not None else conf
-            lines.append(f"- **{h.get('label', h.get('id', ''))}** — {node_labels} [{conf_tag}]")
+            h_label = sanitize_label(str(h.get('label', h.get('id', ''))))
+            lines.append(f"- **{h_label}** — {node_labels} [{conf_tag}]")
 
     lines += ["", f"## Communities ({len(communities)} total, {thin_count_summary} thin omitted)"]
     for cid, nodes in communities.items():
-        label = community_labels.get(cid, f"Community {cid}")
+        # C3: community label is LLM-generated; node labels are LLM-derived.
+        label = sanitize_label(community_labels.get(cid, f"Community {cid}"))
         score = cohesion_scores.get(cid, 0.0)
         # Filter method/function stubs from display - they're structural noise
         real_nodes = [n for n in nodes if not _ifn(G, n)]
@@ -139,7 +149,7 @@ def generate(
             continue
         if len(real_nodes) < min_community_size:
             continue
-        display = [G.nodes[n].get("label", n) for n in real_nodes[:8]]
+        display = [sanitize_label(G.nodes[n].get("label", n)) for n in real_nodes[:8]]
         suffix = f" (+{len(real_nodes)-8} more)" if len(real_nodes) > 8 else ""
         lines += [
             "",
@@ -152,11 +162,14 @@ def generate(
     if ambiguous:
         lines += ["", "## Ambiguous Edges - Review These"]
         for u, v, d in ambiguous:
-            ul = G.nodes[u].get("label", u)
-            vl = G.nodes[v].get("label", v)
+            # C3: labels, source_file, relation are LLM-influenced.
+            ul = sanitize_label(G.nodes[u].get("label", u))
+            vl = sanitize_label(G.nodes[v].get("label", v))
+            src = sanitize_label(str(d.get('source_file', '')))
+            rel = sanitize_label(str(d.get('relation', 'unknown'))) or 'unknown'
             lines += [
                 f"- `{ul}` → `{vl}`  [AMBIGUOUS]",
-                f"  {d.get('source_file', '')} · relation: {d.get('relation', 'unknown')}",
+                f"  {src} · relation: {rel}",
             ]
 
     # --- Gaps section ---
@@ -178,7 +191,8 @@ def generate(
     if gap_count > 0 or amb_pct > 20:
         lines += ["", "## Knowledge Gaps"]
         if isolated:
-            isolated_labels = [G.nodes[n].get("label", n) for n in isolated[:5]]
+            # C3: labels are LLM-derived.
+            isolated_labels = [sanitize_label(G.nodes[n].get("label", n)) for n in isolated[:5]]
             suffix = f" (+{len(isolated)-5} more)" if len(isolated) > 5 else ""
             lines.append(f"- **{len(isolated)} isolated node(s):** {', '.join(f'`{l}`' for l in isolated_labels)}{suffix}")
             lines.append("  These have ≤1 connection - possible missing edges or undocumented components.")
@@ -191,13 +205,14 @@ def generate(
         lines += ["", "## Suggested Questions"]
         no_signal = len(suggested_questions) == 1 and suggested_questions[0].get("type") == "no_signal"
         if no_signal:
-            lines.append(f"_{suggested_questions[0]['why']}_")
+            lines.append(f"_{sanitize_label(suggested_questions[0].get('why', ''))}_")
         else:
             lines.append("_Questions this graph is uniquely positioned to answer:_")
             lines.append("")
             for q in suggested_questions:
+                # C3: LLM-suggested questions go directly into GRAPH_REPORT.md.
                 if q.get("question"):
-                    lines.append(f"- **{q['question']}**")
-                    lines.append(f"  _{q['why']}_")
+                    lines.append(f"- **{sanitize_label(q['question'])}**")
+                    lines.append(f"  _{sanitize_label(q.get('why', ''))}_")
 
     return "\n".join(lines)

@@ -28,8 +28,12 @@ def google_workspace_enabled(value: str | None = None) -> bool:
     return raw.strip().lower() in {"1", "true", "yes", "on"}
 
 
-def _safe_yaml_str(value: str) -> str:
-    return value.replace("\\", "\\\\").replace('"', '\\"').replace("\n", " ").replace("\r", " ")
+# H7: previously this module had its own weaker YAML escaper that only
+# handled backslash / quote / CR / LF. Use the hardened helper from ingest.py
+# so hostile values (e.g. attacker-controlled Drive file titles) cannot break
+# out of double-quoted scalars via tab, NUL, U+2028, U+2029 or other control
+# characters that the old escaper passed through unchanged.
+from graphify.ingest import _yaml_str as _safe_yaml_str  # noqa: F401
 
 
 def _extract_file_id_from_url(url: str) -> str | None:
