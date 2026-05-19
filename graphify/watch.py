@@ -720,6 +720,14 @@ def watch(watch_path: Path, debounce: float = 3.0) -> None:
         observer.join()
 
 
+# Public API — hooks.py and __main__.py should import these names.
+# The underscore-prefixed originals are kept as aliases so that:
+#   - Previously-installed git hooks (which embed the old import) keep working.
+#   - Tests that monkeypatch `watch_mod._rebuild_code` still target the right object.
+rebuild_code = _rebuild_code
+apply_resource_limits = _apply_resource_limits
+
+
 if __name__ == "__main__":
     import argparse
     parser = argparse.ArgumentParser(description="Watch a folder and auto-update the graphify graph")

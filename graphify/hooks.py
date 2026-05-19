@@ -81,14 +81,14 @@ if not changed:
 print(f'[graphify hook] {len(changed)} file(s) changed - rebuilding graph...')
 
 try:
-    from graphify.watch import _rebuild_code, _apply_resource_limits
-    _apply_resource_limits()
+    from graphify.watch import rebuild_code, apply_resource_limits
+    apply_resource_limits()
     _timeout = int(os.environ.get('GRAPHIFY_REBUILD_TIMEOUT', '600'))
     if _timeout > 0 and hasattr(signal, 'SIGALRM'):
         signal.signal(signal.SIGALRM, lambda *_: (_ for _ in ()).throw(TimeoutError(f'graphify rebuild exceeded {_timeout}s')))
         signal.alarm(_timeout)
     _force = os.environ.get('GRAPHIFY_FORCE', '').lower() in ('1', 'true', 'yes')
-    _rebuild_code(Path('.'), changed_paths=changed, force=_force)
+    rebuild_code(Path('.'), changed_paths=changed, force=_force)
 except TimeoutError as exc:
     print(f'[graphify hook] {exc}')
     sys.exit(1)
@@ -132,20 +132,20 @@ _GRAPHIFY_LOG="${HOME}/.cache/graphify-rebuild.log"
 mkdir -p "$(dirname "$_GRAPHIFY_LOG")"
 echo "[graphify] Branch switched - launching background rebuild (log: $_GRAPHIFY_LOG)"
 nohup $GRAPHIFY_PYTHON -c "
-from graphify.watch import _rebuild_code, _apply_resource_limits
+from graphify.watch import rebuild_code, apply_resource_limits
 from pathlib import Path
 import os, signal, sys
 try:
-    _apply_resource_limits()
+    apply_resource_limits()
     _timeout = int(os.environ.get('GRAPHIFY_REBUILD_TIMEOUT', '600'))
     if _timeout > 0 and hasattr(signal, 'SIGALRM'):
         signal.signal(signal.SIGALRM, lambda *_: (_ for _ in ()).throw(TimeoutError(f'graphify rebuild exceeded {_timeout}s')))
         signal.alarm(_timeout)
     _force = os.environ.get('GRAPHIFY_FORCE', '').lower() in ('1', 'true', 'yes')
     # post-checkout: branch switch can touch arbitrary files; full rebuild path
-    # (no changed_paths) is correct here. The flock inside _rebuild_code still
+    # (no changed_paths) is correct here. The flock inside rebuild_code still
     # prevents pile-ups when commit + checkout fire back-to-back.
-    _rebuild_code(Path('.'), force=_force)
+    rebuild_code(Path('.'), force=_force)
 except TimeoutError as exc:
     print(f'[graphify] {exc}')
     sys.exit(1)

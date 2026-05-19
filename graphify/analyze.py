@@ -4,6 +4,7 @@ from pathlib import Path
 import networkx as nx
 
 from graphify.build import edge_data
+from graphify.constants import CODE_EXTENSIONS, DOC_EXTENSIONS, PAPER_EXTENSIONS, IMAGE_EXTENSIONS
 
 # Language families — extensions sharing a runtime can legitimately call each other
 _LANG_FAMILY: dict[str, str] = {
@@ -153,9 +154,6 @@ def _is_concept_node(G: nx.Graph, node_id: str) -> bool:
     if "." not in source.split("/")[-1]:
         return True
     return False
-
-
-from graphify.detect import CODE_EXTENSIONS, DOC_EXTENSIONS, PAPER_EXTENSIONS, IMAGE_EXTENSIONS
 
 
 def _file_category(path: str) -> str:
@@ -430,7 +428,11 @@ def suggest_questions(
 
     # 2. Bridge nodes (high betweenness) → cross-cutting concern questions
     if G.number_of_edges() > 0:
-        k = min(100, G.number_of_nodes()) if G.number_of_nodes() > 1000 else None
+        # Always use approximate betweenness (H10): exact O(V·E) blocks for
+        # seconds on graphs >= ~500 nodes. k=min(500, n) keeps top-3 bridges
+        # stable; seed=42 ensures reproducibility. Do NOT cache on G.graph —
+        # it mutates the topology hash used by watch._rebuild_code.
+        k = min(500, G.number_of_nodes())
         betweenness = nx.betweenness_centrality(G, k=k, seed=42)
         # Top bridge nodes that are NOT file-level hubs
         bridges = sorted(

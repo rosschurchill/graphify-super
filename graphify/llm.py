@@ -21,7 +21,8 @@ _FILE_CHAR_CAP = 20_000
 _PER_FILE_OVERHEAD_CHARS = 80
 # Coarse fallback used only when `tiktoken` is not installed. 1 token ≈ 4 chars
 # is the standard heuristic for English/code on BPE tokenizers.
-_CHARS_PER_TOKEN = 4
+# Canonical definition is in graphify.constants.CHARS_PER_TOKEN.
+from graphify.constants import CHARS_PER_TOKEN as _CHARS_PER_TOKEN
 
 
 def _get_tokenizer():
@@ -945,32 +946,20 @@ def _merge_into(merged: dict, result: dict) -> None:
     merged["output_tokens"] += result.get("output_tokens", 0)
 
 
-def _call_llm(prompt: str, *, backend: str, max_tokens: int = 200) -> str:
-    """Send a plain-text prompt to `backend` and return the model's text reply.
+def _send_text_via_backend(
+    backend: str,
+    cfg: dict,
+    key: str | None,
+    mdl: str,
+    prompt: str,
+    max_tokens: int,
+) -> str:
+    """Transport layer: send *prompt* to *backend* and return the raw text reply.
 
-    Used by lightweight callers (e.g. `graphify.dedup` LLM tiebreaker) that
-    don't need the full extraction prompt or JSON-shaped output. Mirrors the
-    backend dispatch logic of `extract_files_direct` but skips the
-    `_EXTRACTION_SYSTEM` prompt and JSON parsing.
-
-    Previously `graphify.dedup` imported a `_call_llm` symbol that did not
-    exist in this module, so the LLM tiebreaker silently no-op'd on
-    `ImportError` (F-038). Adding the function here re-enables it.
+    Single source of truth for per-backend dispatch used by ``_call_llm``.
+    Does NOT apply ``_EXTRACTION_SYSTEM`` — callers handle any system-prompt
+    injection they need.
     """
-    if backend not in BACKENDS:
-        raise ValueError(f"Unknown backend {backend!r}")
-    cfg = BACKENDS[backend]
-    key = _get_backend_api_key(backend)
-    if not key and backend == "ollama":
-        ollama_url = os.environ.get("OLLAMA_BASE_URL", cfg.get("base_url", ""))
-        _validate_ollama_base_url(ollama_url)
-        key = "ollama"
-    if not key and backend not in ("bedrock", "claude-cli"):
-        raise ValueError(
-            f"No API key for backend '{backend}'. Set {_format_backend_env_keys(backend)}."
-        )
-    mdl = _default_model_for_backend(backend)
-
     if backend == "claude":
         try:
             import anthropic
@@ -985,7 +974,8 @@ def _call_llm(prompt: str, *, backend: str, max_tokens: int = 200) -> str:
         return resp.content[0].text if resp.content else ""
 
     if backend == "claude-cli":
-        import shutil, subprocess
+        import shutil
+        import subprocess
         if shutil.which("claude") is None:
             raise RuntimeError("Claude Code CLI not found on $PATH")
         proc = subprocess.run(
@@ -1021,7 +1011,7 @@ def _call_llm(prompt: str, *, backend: str, max_tokens: int = 200) -> str:
         )
         return resp.get("output", {}).get("message", {}).get("content", [{}])[0].get("text", "")
 
-    # OpenAI-compatible (kimi, openai, gemini, ollama)
+    # OpenAI-compatible (kimi, openai, gemini, ollama, …)
     try:
         from openai import OpenAI
     except ImportError as exc:
@@ -1043,6 +1033,34 @@ def _call_llm(prompt: str, *, backend: str, max_tokens: int = 200) -> str:
     if not resp.choices or resp.choices[0].message is None:
         raise ValueError("LLM returned empty or filtered response")
     return resp.choices[0].message.content or ""
+
+
+def _call_llm(prompt: str, *, backend: str, max_tokens: int = 200) -> str:
+    """Send a plain-text prompt to `backend` and return the model's text reply.
+
+    Used by lightweight callers (e.g. `graphify.dedup` LLM tiebreaker) that
+    don't need the full extraction prompt or JSON-shaped output. Delegates
+    transport to ``_send_text_via_backend`` — the single source of truth for
+    per-backend dispatch — and skips ``_EXTRACTION_SYSTEM`` and JSON parsing.
+
+    Previously `graphify.dedup` imported a `_call_llm` symbol that did not
+    exist in this module, so the LLM tiebreaker silently no-op'd on
+    `ImportError` (F-038). Adding the function here re-enables it.
+    """
+    if backend not in BACKENDS:
+        raise ValueError(f"Unknown backend {backend!r}")
+    cfg = BACKENDS[backend]
+    key = _get_backend_api_key(backend)
+    if not key and backend == "ollama":
+        ollama_url = os.environ.get("OLLAMA_BASE_URL", cfg.get("base_url", ""))
+        _validate_ollama_base_url(ollama_url)
+        key = "ollama"
+    if not key and backend not in ("bedrock", "claude-cli"):
+        raise ValueError(
+            f"No API key for backend '{backend}'. Set {_format_backend_env_keys(backend)}."
+        )
+    mdl = _default_model_for_backend(backend)
+    return _send_text_via_backend(backend, cfg, key, mdl, prompt, max_tokens)
 
 
 def estimate_cost(backend: str, input_tokens: int, output_tokens: int) -> float:

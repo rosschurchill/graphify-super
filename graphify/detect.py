@@ -12,6 +12,16 @@ from graphify.google_workspace import (
     convert_google_workspace_file,
     google_workspace_enabled,
 )
+# Extension constants live in the zero-dependency constants module so that
+# analyze.py (and other post-detect stages) can import them without creating a
+# circular dependency.  Re-exported here for backwards compatibility.
+from graphify.constants import (
+    CODE_EXTENSIONS,
+    DOC_EXTENSIONS,
+    PAPER_EXTENSIONS,
+    IMAGE_EXTENSIONS,
+    load_json_with_fallback as _load_json,
+)
 
 
 class FileType(str, Enum):
@@ -23,11 +33,6 @@ class FileType(str, Enum):
 
 
 _MANIFEST_PATH = "graphify-out/manifest.json"
-
-CODE_EXTENSIONS = {'.py', '.ts', '.js', '.jsx', '.tsx', '.mjs', '.ejs', '.go', '.rs', '.java', '.groovy', '.gradle', '.cpp', '.cc', '.cxx', '.c', '.h', '.hpp', '.rb', '.swift', '.kt', '.kts', '.cs', '.scala', '.php', '.lua', '.luau', '.toc', '.zig', '.ps1', '.ex', '.exs', '.m', '.mm', '.jl', '.vue', '.svelte', '.astro', '.dart', '.v', '.sv', '.sql', '.r', '.f', '.F', '.f90', '.F90', '.f95', '.F95', '.f03', '.F03', '.f08', '.F08', '.pas', '.pp', '.dpr', '.dpk', '.lpr', '.inc', '.dfm', '.lfm', '.lpk', '.sh', '.bash', '.json'}
-DOC_EXTENSIONS = {'.md', '.mdx', '.qmd', '.txt', '.rst', '.html', '.yaml', '.yml'}
-PAPER_EXTENSIONS = {'.pdf'}
-IMAGE_EXTENSIONS = {'.png', '.jpg', '.jpeg', '.gif', '.webp', '.svg'}
 OFFICE_EXTENSIONS = {'.docx', '.xlsx'}
 VIDEO_EXTENSIONS = {'.mp4', '.mov', '.webm', '.mkv', '.avi', '.m4v', '.mp3', '.wav', '.m4a', '.ogg'}
 
@@ -855,10 +860,7 @@ def _md5_file(path: Path) -> str:
 
 def load_manifest(manifest_path: str = _MANIFEST_PATH) -> dict:
     """Load the manifest from a previous run. Returns {} on any error."""
-    try:
-        return json.loads(Path(manifest_path).read_text(encoding="utf-8"))
-    except Exception:
-        return {}
+    return _load_json(Path(manifest_path), {})
 
 
 def save_manifest(

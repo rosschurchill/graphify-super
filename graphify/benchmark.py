@@ -7,9 +7,7 @@ import networkx as nx
 from networkx.readwrite import json_graph
 
 from graphify.build import edge_data
-
-
-_CHARS_PER_TOKEN = 4  # standard approximation
+from graphify.constants import CHARS_PER_TOKEN as _CHARS_PER_TOKEN
 
 
 def _safe(unicode_char: str, ascii_fallback: str) -> str:
